@@ -23,8 +23,8 @@ import matplotlib
 import matplotlib.pyplot as plt 
 from mpl_toolkits.mplot3d import Axes3D
 # from mayavi import mlab
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+# import plotly.graph_objects as go
+# from plotly.subplots import make_subplots
 import pickle
 import time
 import gc
@@ -542,6 +542,8 @@ class plot:
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("XY-plane, z =",str(self.rays.z_node_labels[plane_idx]),"km")))
+            plt.xlabel('X (km)')
+            plt.ylabel('Y (km)')
         elif plane == 'xz':         
             # Plot data:
             Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
@@ -549,6 +551,8 @@ class plot:
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("XZ-plane, y =",str(self.rays.y_node_labels[plane_idx]),"km")))
+            plt.xlabel('X (km)')
+            plt.ylabel('Z (km)')
         elif plane == 'yz':
             # Plot data:
             Z, Y = np.meshgrid(self.rays.z_node_labels, self.rays.y_node_labels)
@@ -556,12 +560,12 @@ class plot:
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("YZ-plane, x =",str(self.rays.x_node_labels[plane_idx]),"km")))
+            plt.xlabel('Y (km)')
+            plt.ylabel('Z (km)')
         else:
             print('Error: Plane option', plane, 'does not exist. Exiting.')
             sys.exit()
         plt.colorbar(label='$Q_'+self.inv.seismic_phase_to_use+'$')
-        plt.xlabel('X (km)')
-        plt.ylabel('Z (km)')
         # Save figure, if specified:
         if len(fig_out_fname) > 0:
             plt.savefig(fig_out_fname, dpi=300)
