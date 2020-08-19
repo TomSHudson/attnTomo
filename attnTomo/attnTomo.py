@@ -22,13 +22,18 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt 
 from mpl_toolkits.mplot3d import Axes3D
+# from mayavi import mlab
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pickle
 import time
 import gc
 from scipy.sparse.linalg import lsqr
 from scipy.interpolate import griddata
+import copy
 import NonLinLocPy
 import ttcrpy.rgrid as ttcrpy_rgrid
+from scipy.ndimage import gaussian_filter
 
 #----------------------------------------------- Define constants and parameters -----------------------------------------------
 # Define any constants/parameters:
@@ -393,8 +398,18 @@ class inversion:
         in_fname - Path/filename to load data from (str)
         """      
         self.inv_info_fname = out_fname
-        f = open(out_fname, 'wb')
-        pickle.dump(self, f)
+        try:
+            f = open(out_fname, 'wb')
+            pickle.dump(self, f)
+        except OverflowError:
+            f = open(out_fname, 'wb')
+            inv_out = copy.deepcopy(self)
+            inv_out.G = []
+            gc.collect()
+            pickle.dump(inv_out, f)
+            del inv_out
+            gc.collect()
+            print('Note: Failed to save G, as >4gb')
         print('Saved class object to file: ',out_fname)
         print('(Note: To load, load using pickle as rb)')
 
@@ -483,14 +498,21 @@ class plot:
         return(self.opt_Q_tomo_array_interp)
 
 
-    def plot_inversion_result(self, opt_lamb, plane='xz', plane_idx=0):
+    def plot_inversion_result(self, opt_lamb, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname=''):
         """Plot inversion result for optimal damping parameter.
         Inputs:
         opt_lamb - The optimal damping/regularisation parameter (decided 
         upon based on L-curve analysis).
         Optional:
         plane - The plane to plot. Can be xy, xz, or yz. (str)
-        plane_idx - The index of the plane to plot (int)"""
+        plane_idx - The index of the plane to plot (int)
+        spatial_smooth_sigma - The spatial smoothing to apply, in km. 
+                                Applies Gaussian filtering. Default is 0.0, 
+                                which applies no filtering (float)
+        cmap - The matplotlib colormap to use. Default is viridis (str)
+        fig_out_fname - The name of the file to save the file to, if 
+                        specified. Default is not to save to file. (str)
+        """
         # Load optimal data:
         opt_result = pickle.load(open(self.inv.results_out_fname_prefix+str(opt_lamb)+'_'+self.seismic_phase_to_use+'.pkl', 'rb'))
         opt_m = opt_result[0]
@@ -502,22 +524,204 @@ class plot:
         # Interpolate results:
         self.opt_Q_tomo_array_interp = self.psuedo_threeD_interpolation()
 
+        # Apply spatial filtering, if specified:
+        if spatial_smooth_sigma_km > 0.:
+            grid_spacing_km = self.rays.x_node_labels[1] - self.rays.x_node_labels[0] # (Note: Assumes uniform grid spacing in x,y,z)
+            gauss_filt_sigma = spatial_smooth_sigma_km / grid_spacing_km
+            print(gauss_filt_sigma)
+            self.opt_Q_tomo_array_interp_smooth = gaussian_filter(self.opt_Q_tomo_array_interp, sigma=gauss_filt_sigma)
+        else:
+            self.opt_Q_tomo_array_interp_smooth = self.opt_Q_tomo_array_interp
+
         # Plot result:
-        plt.figure()
+        plt.figure(figsize=(8,4))
         if plane == 'xy':
-            plt.imshow(1./self.opt_Q_tomo_array_interp[:,:,plane_idx].transpose(), vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm())
-        elif plane == 'xz':
-            plt.imshow(1./self.opt_Q_tomo_array_interp[:,plane_idx,:].transpose(), vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm())
+            # Plot data:
+            Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
+            plt.pcolormesh(X, Y, 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.gca().invert_yaxis()
+            # Add text:
+            plt.title(' '.join(("XY-plane, z =",str(self.rays.z_node_labels[plane_idx]),"km")))
+        elif plane == 'xz':         
+            # Plot data:
+            Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+            plt.pcolormesh(X, Z, 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.gca().invert_yaxis()
+            # Add text:
+            plt.title(' '.join(("XZ-plane, y =",str(self.rays.y_node_labels[plane_idx]),"km")))
         elif plane == 'yz':
-            plt.imshow(1./self.opt_Q_tomo_array_interp[plane_idx,:,:].transpose(), vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm())
+            # Plot data:
+            Z, Y = np.meshgrid(self.rays.z_node_labels, self.rays.y_node_labels)
+            plt.pcolormesh(Y, Z, 1./self.opt_Q_tomo_array_interp_smooth[plane_idx,:,:], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.gca().invert_yaxis()
+            # Add text:
+            plt.title(' '.join(("YZ-plane, x =",str(self.rays.x_node_labels[plane_idx]),"km")))
         else:
             print('Error: Plane option', plane, 'does not exist. Exiting.')
             sys.exit()
         plt.colorbar(label='$Q_'+self.inv.seismic_phase_to_use+'$')
-        plt.xlabel('X')
-        plt.ylabel('Z')
+        plt.xlabel('X (km)')
+        plt.ylabel('Z (km)')
+        # Save figure, if specified:
+        if len(fig_out_fname) > 0:
+            plt.savefig(fig_out_fname, dpi=300)
+            print('Saved figure to:',fig_out_fname)
+        # And show figure:
+        plt.show()
+
+
+    def plot_inversion_result_3D_slices(self, opt_lamb, plane='xz', spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname='', vmin=10, vmax=1000):
+        """Plot inversion result for optimal damping parameter as a 3D plot with a 
+        number of 2D surfaces.
+        Inputs:
+        opt_lamb - The optimal damping/regularisation parameter (decided 
+        upon based on L-curve analysis).
+        Optional:
+        plane - The plane to plot. Can be xy, xz, or yz. (str)
+        spatial_smooth_sigma - The spatial smoothing to apply, in km. 
+                                Applies Gaussian filtering. Default is 0.0, 
+                                which applies no filtering (float)
+        cmap - The matplotlib colormap to use. Default is viridis (str)
+        fig_out_fname - The name of the file to save the file to, if 
+                        specified. Default is not to save to file. (str)
+        """
+        # Load optimal data:
+        opt_result = pickle.load(open(self.inv.results_out_fname_prefix+str(opt_lamb)+'_'+self.seismic_phase_to_use+'.pkl', 'rb'))
+        opt_m = opt_result[0]
+
+        # Reconstruct full model 3D grid result from data:
+        # (Add unsampled cells back in then reshape solution back to 3D grid)
+        self.opt_Q_tomo_array = self.inv.reconstruct_full_threeD_grid_soln(opt_m)
+
+        # Interpolate results:
+        self.opt_Q_tomo_array_interp = self.psuedo_threeD_interpolation()
+
+        # Apply spatial filtering, if specified:
+        if spatial_smooth_sigma_km > 0.:
+            grid_spacing_km = self.rays.x_node_labels[1] - self.rays.x_node_labels[0] # (Note: Assumes uniform grid spacing in x,y,z)
+            gauss_filt_sigma = spatial_smooth_sigma_km / grid_spacing_km
+            print(gauss_filt_sigma)
+            self.opt_Q_tomo_array_interp_smooth = gaussian_filter(self.opt_Q_tomo_array_interp, sigma=gauss_filt_sigma)
+        else:
+            self.opt_Q_tomo_array_interp_smooth = self.opt_Q_tomo_array_interp
+
+        # # # Plot result (plotly):
+        # # Setup figure:
+        # fig = make_subplots(rows=1, cols=1,
+        #     specs=[[{'is_3d': True}]],
+        #     subplot_titles=['Color corresponds to z'],)
+        # # fig = make_subplots(rows=1, cols=2,
+        # #             specs=[[{'is_3d': True}, {'is_3d': True}]],
+        # #             subplot_titles=['Color corresponds to z', 'Color corresponds to distance to origin'],)
+        # # --------- Plot xy plane: ---------
+        # plane_idx = int(len(self.rays.z_node_labels) / 2. )
+        # Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
+        # Z = self.rays.z_node_labels[plane_idx] * np.ones(X.shape)
+        # # Create forth dimension to colour surfaces:
+        # colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx]
+        # # And plot:
+        # fig.add_trace(go.Surface(x=X, y=Y, z=Z, surfacecolor=np.log10(colour_dimension), cmin=np.log10(vmin), cmax=np.log10(vmax), opacity=0.6, colorscale=cmap), 1, 1)
+        # # ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False)
+        # # --------- Plot xz plane: ---------
+        # plane_idx = int(len(self.rays.y_node_labels) / 2. )
+        # Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+        # Y = self.rays.y_node_labels[plane_idx] * np.ones(X.shape)
+        # # Create forth dimension to colour surfaces:
+        # colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:]
+        # # And plot:
+        # fig.add_trace(go.Surface(x=X, y=Y, z=Z, surfacecolor=np.log10(colour_dimension), cmin=np.log10(vmin), cmax=np.log10(vmax), opacity=0.6, colorscale=cmap), 1, 1)
+        # # ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False)
+        # # --------- Plot xz plane: ---------
+        # plane_idx = int(len(self.rays.y_node_labels) / 2. )
+        # Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+        # Y = self.rays.y_node_labels[plane_idx] * np.ones(X.shape)
+        # # Create forth dimension to colour surfaces:
+        # colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:]
+        # # And plot:
+        # fig.add_trace(go.Surface(x=X, y=Y, z=Z, surfacecolor=np.log10(colour_dimension), cmin=np.log10(vmin), cmax=np.log10(vmax), opacity=0.6, colorscale=cmap), 1, 1)
+        # # ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False)
+        # # --------- Finish plotting: ---------
+        # fig.update_layout(coloraxis_colorbar=dict(
+        #     title="QP",
+        #     tickvals=[1,2,3],
+        #     ticktext=["10", "100", "1000"],
+        # ))
+        # print(fig['layout']) #['zaxis']['autorange'] = "reversed"
+        # fig.show()
+
+        # # Plot result (mayavi):
+        # # Setup figure:
+        # fig = mlab.figure()
+        # # --------- Plot xy plane: ---------
+        # plane_idx = int(len(self.rays.z_node_labels) / 2. )
+        # Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
+        # Z = self.rays.z_node_labels[plane_idx] * np.ones(X.shape)
+        # # Create forth dimension to colour surfaces:
+        # colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx]
+        # # And plot:
+        # surf_xy = mlab.volume_slice(X, Y, Z, colour_dimension, vmin=vmin, vmax=vmax, plane_opacity=0.5, plane_orientation='x_axes', slice_index=plane_idx) #colormap='inferno_r', 
+        # # # --------- Plot xz plane: ---------
+        # # plane_idx = int(len(self.rays.y_node_labels) / 2. )
+        # # Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+        # # Y = self.rays.y_node_labels[plane_idx] * np.ones(X.shape)
+        # # # Create forth dimension to colour surfaces:
+        # # colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:]
+        # # fcolors = cm.to_rgba(colour_dimension)
+        # # # And plot:
+        # # ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False, zorder=1)
+        # fig.show()
+
+        # Plot result:
+        # Setup figure:
+        fig = plt.figure(figsize=(6,6))
+        ax = fig.gca(projection='3d')
+        # Setup colour dimension info:
+        norm = matplotlib.colors.LogNorm(vmin, vmax) #matplotlib.colors.Normalize(vmin, vmax)
+        cm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        cm.set_array([])
+        # --------- Plot xy plane: ---------
+        plane_idx = int(len(self.rays.z_node_labels) / 2. )
+        Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
+        Z = self.rays.z_node_labels[plane_idx] * np.ones(X.shape)
+        # Create forth dimension to colour surfaces:
+        colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx]
+        fcolors = cm.to_rgba(colour_dimension, alpha=0.2)
+        # And plot:
+        ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False, zorder=2)
+        # --------- Plot xz plane: ---------
+        plane_idx = int(len(self.rays.y_node_labels) / 2. )
+        Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+        Y = self.rays.y_node_labels[plane_idx] * np.ones(X.shape)
+        # Create forth dimension to colour surfaces:
+        colour_dimension = 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:]
+        fcolors = cm.to_rgba(colour_dimension)
+        # And plot:
+        ax.plot_surface(X, Y, Z, rstride=1, cstride=1, facecolors=fcolors, vmin=vmin, vmax=vmax, shade=False, zorder=1)
         plt.show()
             
+
+class checkerboard:
+    """Class to perform checkerboard testing."""
+
+    def __init__(self, x_node_labels, y_node_labels, z_node_labels, vel_grid, n_threads=1):
+        """Function to initialise checkerboard class. 
+        Inputs:
+        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
+        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
+        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
+        vel_grid - A 3D grid describing the velocity, in km/s, for a particular seismic phase. (np array, of shape x,y,z)
+        Optional:
+        n_threads - Number of threads to try and use.
+        """
+        # Assign the grids:
+        self.x_node_labels = x_node_labels
+        self.y_node_labels = y_node_labels
+        self.z_node_labels = z_node_labels
+        self.n_threads = n_threads
+        self.grid = ttcrpy_rgrid.Grid3d(x_node_labels, y_node_labels, z_node_labels, cell_slowness=False, n_threads=self.n_threads)
+        self.vel_grid = vel_grid
+        # Initialise other key variables:
+
 
 #----------------------------------------------- End: Define main functions -----------------------------------------------
 
