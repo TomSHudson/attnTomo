@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/python
 #-----------------------------------------------------------------------------------------------------------------------------------------
 
@@ -34,6 +36,7 @@ import copy
 import NonLinLocPy
 import ttcrpy.rgrid as ttcrpy_rgrid
 from scipy.ndimage import gaussian_filter
+from scipy.stats import multivariate_normal
 
 #----------------------------------------------- Define constants and parameters -----------------------------------------------
 # Define any constants/parameters:
@@ -350,7 +353,7 @@ class inversion:
                             user, will not save to file (str)
         """
         # Initialise function input parameters:
-        self.lamb = 1. # Damping
+        self.lamb = lamb # Damping
         self.Q_init = Q_init # Initial guess at Q
         self.result_out_fname = result_out_fname
         # perform lsqr inversion:
@@ -498,11 +501,10 @@ class plot:
         return(self.opt_Q_tomo_array_interp)
 
 
-    def plot_inversion_result(self, opt_lamb, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname=''):
+    def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname='', vmin=10., vmax=1000.):
         """Plot inversion result for optimal damping parameter.
         Inputs:
-        opt_lamb - The optimal damping/regularisation parameter (decided 
-        upon based on L-curve analysis).
+        inv_fname - The inversion data fname to plot data for.
         Optional:
         plane - The plane to plot. Can be xy, xz, or yz. (str)
         plane_idx - The index of the plane to plot (int)
@@ -514,7 +516,7 @@ class plot:
                         specified. Default is not to save to file. (str)
         """
         # Load optimal data:
-        opt_result = pickle.load(open(self.inv.results_out_fname_prefix+str(opt_lamb)+'_'+self.seismic_phase_to_use+'.pkl', 'rb'))
+        opt_result = pickle.load(open(inv_fname, 'rb'))
         opt_m = opt_result[0]
 
         # Reconstruct full model 3D grid result from data:
@@ -538,7 +540,7 @@ class plot:
         if plane == 'xy':
             # Plot data:
             Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
-            plt.pcolormesh(X, Y, 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.pcolormesh(X, Y, 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("XY-plane, z =",str(self.rays.z_node_labels[plane_idx]),"km")))
@@ -547,7 +549,7 @@ class plot:
         elif plane == 'xz':         
             # Plot data:
             Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
-            plt.pcolormesh(X, Z, 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.pcolormesh(X, Z, 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("XZ-plane, y =",str(self.rays.y_node_labels[plane_idx]),"km")))
@@ -556,7 +558,7 @@ class plot:
         elif plane == 'yz':
             # Plot data:
             Z, Y = np.meshgrid(self.rays.z_node_labels, self.rays.y_node_labels)
-            plt.pcolormesh(Y, Z, 1./self.opt_Q_tomo_array_interp_smooth[plane_idx,:,:], vmin=10., vmax=1000., norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            plt.pcolormesh(Y, Z, 1./self.opt_Q_tomo_array_interp_smooth[plane_idx,:,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
             plt.gca().invert_yaxis()
             # Add text:
             plt.title(' '.join(("YZ-plane, x =",str(self.rays.x_node_labels[plane_idx]),"km")))
@@ -707,24 +709,159 @@ class plot:
 class checkerboard:
     """Class to perform checkerboard testing."""
 
-    def __init__(self, x_node_labels, y_node_labels, z_node_labels, vel_grid, n_threads=1):
+    def __init__(self, rays):
         """Function to initialise checkerboard class. 
         Inputs:
-        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
-        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
-        x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
-        vel_grid - A 3D grid describing the velocity, in km/s, for a particular seismic phase. (np array, of shape x,y,z)
-        Optional:
-        n_threads - Number of threads to try and use.
+        rays - A rays class containing ray tracing, as in the class described in this module.
+
         """
-        # Assign the grids:
-        self.x_node_labels = x_node_labels
-        self.y_node_labels = y_node_labels
-        self.z_node_labels = z_node_labels
-        self.n_threads = n_threads
-        self.grid = ttcrpy_rgrid.Grid3d(x_node_labels, y_node_labels, z_node_labels, cell_slowness=False, n_threads=self.n_threads)
-        self.vel_grid = vel_grid
-        # Initialise other key variables:
+        # Assign input arguments to the class object:
+        self.rays = rays
+
+    def find_nearest(self, array, value):
+        array = np.asarray(array)
+        idx = (np.abs(array - value)).argmin()
+        return array[idx], idx
+
+    def create_checkerboard_spikes_grid(self, spike_spacing_km, spike_width_km, Q_background=250., spike_rel_amp=0.2):
+        """Function to create checkerboard spikes grid, from specified 
+        spikes size and spacing.
+        Inputs:
+        spike_spacing_km - Spike spacing, in km. (float)
+        spike_width_km - Spike half width, in km. (float)
+        Optional:
+        Q_background - The background Q value. Default is 250. (float)
+        spike_rel_amp - The relative amplitude of the spikes above the 
+                        background level, Q_background. (float)
+        """
+        # Specify Q grid from velocity grid:
+        Q_grid = np.ones(self.rays.vel_grid.shape) * Q_background
+        
+        # Find spike x indices:
+        i = 0
+        spike_x_idxs = []
+        val, idx = self.find_nearest(self.rays.x_node_labels, self.rays.x_node_labels[i] + spike_spacing_km)
+        spike_spacing_lim = idx.copy() + 1
+        while i < len(self.rays.x_node_labels) - spike_spacing_lim:
+            if i==0:
+                val, idx = self.find_nearest(self.rays.x_node_labels, self.rays.x_node_labels[i] + spike_spacing_km/2)
+            else:
+                val, idx = self.find_nearest(self.rays.x_node_labels, self.rays.x_node_labels[i] + spike_spacing_km)
+            spike_x_idxs.append(idx)
+            i = idx
+        # Find spike y indices:
+        i = 0
+        spike_y_idxs = []
+        val, idx = self.find_nearest(self.rays.y_node_labels, self.rays.y_node_labels[i] + spike_spacing_km)
+        spike_spacing_lim = idx.copy() + 1
+        while i < len(self.rays.y_node_labels) - spike_spacing_lim:
+            if i==0:
+                val, idx = self.find_nearest(self.rays.y_node_labels, self.rays.y_node_labels[i] + spike_spacing_km/2)
+            else:
+                val, idx = self.find_nearest(self.rays.y_node_labels, self.rays.y_node_labels[i] + spike_spacing_km)
+            spike_y_idxs.append(idx)
+            i = idx
+        # Find spike z indices:
+        i = 0
+        spike_z_idxs = []
+        val, idx = self.find_nearest(self.rays.z_node_labels, self.rays.z_node_labels[i] + spike_spacing_km)
+        spike_spacing_lim = idx.copy() + 1
+        while i < len(self.rays.z_node_labels) - spike_spacing_lim:
+            if i==0:
+                val, idx = self.find_nearest(self.rays.z_node_labels, self.rays.z_node_labels[i] + spike_spacing_km/2)
+            else:
+                val, idx = self.find_nearest(self.rays.z_node_labels, self.rays.z_node_labels[i] + spike_spacing_km)
+            spike_z_idxs.append(idx)
+            i = idx
+
+        # Add multivariate Gaussian spikes into Q grid:
+        X, Y, Z = np.meshgrid(self.rays.x_node_labels, self.rays.y_node_labels, self.rays.z_node_labels)
+        spike_amp = Q_background * spike_rel_amp
+        # Set coords for multivar gaussian:
+        multivar_gauss_pos = np.zeros((X.shape[0],X.shape[1],X.shape[2],3))
+        multivar_gauss_pos[:,:,:,0] = X
+        multivar_gauss_pos[:,:,:,1] = Y
+        multivar_gauss_pos[:,:,:,2] = Z
+        # Loop over spike indices, adding to field:
+        for i in range(len(spike_x_idxs)):
+            mu_x = self.rays.x_node_labels[spike_x_idxs[i]]
+            print(100*(i+1)/len(spike_x_idxs),'% complete')
+            for j in range(len(spike_y_idxs)):
+                mu_y = self.rays.y_node_labels[spike_y_idxs[j]]
+                for k in range(len(spike_z_idxs)):
+                    mu_z = self.rays.z_node_labels[spike_z_idxs[k]]
+                    # Add a multivariate gaussian spike:
+                    rv = multivariate_normal(mean=[mu_x, mu_y, mu_z], cov=(spike_width_km**2), allow_singular=True)
+                    curr_gauss_spike_vals = rv.pdf(multivar_gauss_pos)
+                    Q_grid = Q_grid + ( spike_amp * curr_gauss_spike_vals / np.max(curr_gauss_spike_vals) )
+        del X,Y,Z,curr_gauss_spike_vals
+        gc.collect()
+
+        # Plot Q grid:
+        print('Plotting Q grid')
+        plt.figure()
+        plt.imshow(Q_grid[:,spike_y_idxs[0],:].transpose())
+        plt.colorbar()
+        plt.show()
+
+        # And create inv Q grid and tidy up:
+        self.inv_Q_grid = 1. / Q_grid
+        self.spike_x_idxs = spike_x_idxs
+        self.spike_y_idxs = spike_y_idxs
+        self.spike_z_idxs = spike_z_idxs
+        del Q_grid
+        gc.collect()
+
+
+    def create_synth_t_stars(self):
+        """Creates synthetic t stars using the path lengths and velocity model
+        from the rays object, and 1/Q from the cehckerboard spikes input 
+        (created using checkerboard.create_checkerboard_spikes_grid()).
+        Creates self.inv.t_stars output.
+        """
+        # Calculate G from path lengths, if haven't already:
+        try:
+            self.inv.G
+            print('self.inv.G already exists, so continuing without recalculation.')
+        except AttributeError:
+            self.inv = inversion(self.rays)
+            self.inv.prep_rays_for_inversion()
+
+        # Consolidate Q values, to only use those that have ray paths going through them:
+        inv_Q_grid_consolidated_ravelled = np.delete(self.inv_Q_grid.ravel(), self.inv.rays.unsampled_cell_idxs, axis=0)
+            
+        # And calculate synth t stars from the path lengths, vel grid and the Q grid:
+        self.inv.t_stars = np.matmul(self.inv.G, inv_Q_grid_consolidated_ravelled)
+        print('Number of synth t_star observations to use:', len(self.inv.t_stars))
+
+
+    def perform_synth_inversion(self, lamb, Q_init=250., synth_result_out_fname=''):
+        """
+        Function to perform the inversion on synthetic input data.
+        Inputs:
+        Required:
+        lamb - The damping/regularisation parameter. This should
+                be the same value as used in the real data inversion.
+                (float)
+        Optional:
+        Q_init - The initial Q value to use in the initial lsqr 
+                inversion conditions. This value should be equal
+                to Q_background used in the synthetics for normal
+                use. Default is 250. (float)
+        synth_result_out_fname - The filename to save data out to.
+                                Default is no output. (str)
+
+        Returns:
+        synth_Q_tomo_array - An array containing the synthetic Q 
+                            tomography result.
+        """
+        # Perform the inversion:
+        if len(synth_result_out_fname) == 0:
+            self.synth_Q_tomo_array = self.inv.perform_inversion(lamb=lamb, Q_init=Q_init)
+        else:
+            self.synth_Q_tomo_array = self.inv.perform_inversion(lamb=lamb, Q_init=Q_init, result_out_fname=synth_result_out_fname)
+        return(self.synth_Q_tomo_array)
+        
 
 
 #----------------------------------------------- End: Define main functions -----------------------------------------------
