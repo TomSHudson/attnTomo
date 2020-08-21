@@ -501,7 +501,7 @@ class plot:
         return(self.opt_Q_tomo_array_interp)
 
 
-    def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname='', vmin=10., vmax=1000.):
+    def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname='', vmin=10., vmax=1000., checkerboard_inv=None):
         """Plot inversion result for optimal damping parameter.
         Inputs:
         inv_fname - The inversion data fname to plot data for.
@@ -514,6 +514,10 @@ class plot:
         cmap - The matplotlib colormap to use. Default is viridis (str)
         fig_out_fname - The name of the file to save the file to, if 
                         specified. Default is not to save to file. (str)
+        checkerboard_inv - Checkerboard object. If provided, will plot the
+                            locations of synthetic spikes (their widths).
+                            Default = None, so will not plot. (checkerboard 
+                            object)
         """
         # Load optimal data:
         opt_result = pickle.load(open(inv_fname, 'rb'))
@@ -536,38 +540,62 @@ class plot:
             self.opt_Q_tomo_array_interp_smooth = self.opt_Q_tomo_array_interp
 
         # Plot result:
-        plt.figure(figsize=(8,4))
+        fig, ax = plt.subplots(figsize=(8,4))
         if plane == 'xy':
             # Plot data:
             Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
-            plt.pcolormesh(X, Y, 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
-            plt.gca().invert_yaxis()
+            im = ax.pcolormesh(X, Y, 1./self.opt_Q_tomo_array_interp_smooth[:,:,plane_idx], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
             # Add text:
-            plt.title(' '.join(("XY-plane, z =",str(self.rays.z_node_labels[plane_idx]),"km")))
-            plt.xlabel('X (km)')
-            plt.ylabel('Y (km)')
+            ax.set_title(' '.join(("XY-plane, z =",str(self.rays.z_node_labels[plane_idx]),"km")))
+            ax.set_xlabel('X (km)')
+            ax.set_ylabel('Y (km)')
+            # And plot checkerboard synthetic spike locations, if specified:
+            if checkerboard_inv:
+                for i in range(len(checkerboard_inv.spike_x_idxs)):
+                    for j in range(len(checkerboard_inv.spike_y_idxs)):
+                        x_tmp = checkerboard_inv.rays.x_node_labels[checkerboard_inv.spike_x_idxs[i]] + ((checkerboard_inv.rays.x_node_labels[1] - checkerboard_inv.rays.x_node_labels[0]) / 2)
+                        y_tmp = checkerboard_inv.rays.y_node_labels[checkerboard_inv.spike_y_idxs[j]] + ((checkerboard_inv.rays.y_node_labels[1] - checkerboard_inv.rays.y_node_labels[0]) / 2)
+                        circle_tmp = matplotlib.patches.Circle((x_tmp,y_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
+                        ax.add_artist(circle_tmp)
         elif plane == 'xz':         
             # Plot data:
             Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
-            plt.pcolormesh(X, Z, 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
-            plt.gca().invert_yaxis()
+            im = ax.pcolormesh(X, Z, 1./self.opt_Q_tomo_array_interp_smooth[:,plane_idx,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            ax.invert_yaxis()
             # Add text:
-            plt.title(' '.join(("XZ-plane, y =",str(self.rays.y_node_labels[plane_idx]),"km")))
-            plt.xlabel('X (km)')
-            plt.ylabel('Z (km)')
+            ax.set_title(' '.join(("XZ-plane, y =",str(self.rays.y_node_labels[plane_idx]),"km")))
+            ax.set_xlabel('X (km)')
+            ax.set_ylabel('Z (km)')
+            # And plot checkerboard synthetic spike locations, if specified:
+            if checkerboard_inv:
+                for i in range(len(checkerboard_inv.spike_x_idxs)):
+                    for j in range(len(checkerboard_inv.spike_z_idxs)):
+                        x_tmp = checkerboard_inv.rays.x_node_labels[checkerboard_inv.spike_x_idxs[i]] + ((checkerboard_inv.rays.x_node_labels[1] - checkerboard_inv.rays.x_node_labels[0]) / 2)
+                        z_tmp = checkerboard_inv.rays.z_node_labels[checkerboard_inv.spike_z_idxs[j]] + ((checkerboard_inv.rays.z_node_labels[1] - checkerboard_inv.rays.z_node_labels[0]) / 2)
+                        circle_tmp = matplotlib.patches.Circle((x_tmp,z_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
+                        ax.add_artist(circle_tmp)
         elif plane == 'yz':
             # Plot data:
             Z, Y = np.meshgrid(self.rays.z_node_labels, self.rays.y_node_labels)
-            plt.pcolormesh(Y, Z, 1./self.opt_Q_tomo_array_interp_smooth[plane_idx,:,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
-            plt.gca().invert_yaxis()
+            im = ax.pcolormesh(Y, Z, 1./self.opt_Q_tomo_array_interp_smooth[plane_idx,:,:], vmin=vmin, vmax=vmax, norm=matplotlib.colors.LogNorm(), cmap=cmap)
+            ax.invert_yaxis()
             # Add text:
-            plt.title(' '.join(("YZ-plane, x =",str(self.rays.x_node_labels[plane_idx]),"km")))
-            plt.xlabel('Y (km)')
-            plt.ylabel('Z (km)')
+            ax.set_title(' '.join(("YZ-plane, x =",str(self.rays.x_node_labels[plane_idx]),"km")))
+            ax.set_xlabel('Y (km)')
+            ax.set_ylabel('Z (km)')
+            # And plot checkerboard synthetic spike locations, if specified:
+            if checkerboard_inv:
+                for i in range(len(checkerboard_inv.spike_y_idxs)):
+                    for j in range(len(checkerboard_inv.spike_z_idxs)):
+                        y_tmp = checkerboard_inv.rays.y_node_labels[checkerboard_inv.spike_y_idxs[i]] + ((checkerboard_inv.rays.y_node_labels[1] - checkerboard_inv.rays.y_node_labels[0]) / 2)
+                        z_tmp = checkerboard_inv.rays.z_node_labels[checkerboard_inv.spike_z_idxs[j]] + ((checkerboard_inv.rays.z_node_labels[1] - checkerboard_inv.rays.z_node_labels[0]) / 2)
+                        circle_tmp = matplotlib.patches.Circle((y_tmp,z_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
+                        ax.add_artist(circle_tmp)
         else:
             print('Error: Plane option', plane, 'does not exist. Exiting.')
             sys.exit()
-        plt.colorbar(label='$Q_'+self.inv.seismic_phase_to_use+'$')
+        # plt.colorbar(label='$Q_'+self.inv.seismic_phase_to_use+'$')
+        fig.colorbar(im, label='$Q_'+self.inv.seismic_phase_to_use+'$')
         # Save figure, if specified:
         if len(fig_out_fname) > 0:
             plt.savefig(fig_out_fname, dpi=300)
@@ -723,7 +751,7 @@ class checkerboard:
         idx = (np.abs(array - value)).argmin()
         return array[idx], idx
 
-    def create_checkerboard_spikes_grid(self, spike_spacing_km, spike_width_km, Q_background=250., spike_rel_amp=0.2):
+    def create_checkerboard_spikes_grid(self, spike_spacing_km, spike_width_km, Q_background=250., spike_rel_amp=0.2, plot_out_fname='', cmap='viridis'):
         """Function to create checkerboard spikes grid, from specified 
         spikes size and spacing.
         Inputs:
@@ -799,9 +827,23 @@ class checkerboard:
 
         # Plot Q grid:
         print('Plotting Q grid')
-        plt.figure()
-        plt.imshow(Q_grid[:,spike_y_idxs[0],:].transpose())
-        plt.colorbar()
+        fig, ax = plt.subplots(figsize=(8,4))
+        Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
+        im = ax.pcolormesh(X, Z, Q_grid[:,spike_y_idxs[int(len(spike_y_idxs)/2)],:], norm=matplotlib.colors.LogNorm(), cmap=cmap)
+        ax.invert_yaxis()
+        fig.colorbar(im, label='Q')
+        ax.set_title('Q synth in')
+        ax.set_xlabel('x (km)')
+        ax.set_ylabel('z (km)')
+        # Plot spike locations (for comparison with other plots):
+        for i in range(len(spike_x_idxs)):
+            for j in range(len(spike_z_idxs)):
+                x_tmp = self.rays.x_node_labels[spike_x_idxs[i]] + ((self.rays.x_node_labels[1] - self.rays.x_node_labels[0]) / 2)
+                z_tmp = self.rays.z_node_labels[spike_z_idxs[j]] + ((self.rays.z_node_labels[1] - self.rays.z_node_labels[0]) / 2)
+                circle_tmp = matplotlib.patches.Circle((x_tmp,z_tmp), radius=spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
+                ax.add_artist(circle_tmp)
+        if len(plot_out_fname) > 0:
+            plt.savefig(plot_out_fname, dpi=300)
         plt.show()
 
         # And create inv Q grid and tidy up:
@@ -809,6 +851,8 @@ class checkerboard:
         self.spike_x_idxs = spike_x_idxs
         self.spike_y_idxs = spike_y_idxs
         self.spike_z_idxs = spike_z_idxs
+        self.spike_spacing_km = spike_spacing_km
+        self.spike_width_km = spike_width_km
         del Q_grid
         gc.collect()
 
