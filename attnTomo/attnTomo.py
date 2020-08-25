@@ -501,7 +501,9 @@ class plot:
         return(self.opt_Q_tomo_array_interp)
 
 
-    def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis', fig_out_fname='', vmin=10., vmax=1000., checkerboard_inv=None):
+    def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis',
+                                 fig_out_fname='', vmin=10., vmax=1000., xlims=[], ylims=[], checkerboard_inv=None,
+                                 earthquakes_nonlinloc_fnames=None):
         """Plot inversion result for optimal damping parameter.
         Inputs:
         inv_fname - The inversion data fname to plot data for.
@@ -514,6 +516,11 @@ class plot:
         cmap - The matplotlib colormap to use. Default is viridis (str)
         fig_out_fname - The name of the file to save the file to, if 
                         specified. Default is not to save to file. (str)
+        xlims, ylims - The x and y minimum and maximum extents to plot 
+                        for the specified plane, in km. In format 
+                        [xmin, xmax] , [ymin, ymax]. Default is [], 
+                        which means it will use the full extent. 
+                        (list of two floats each)
         checkerboard_inv - Checkerboard object. If provided, will plot the
                             locations of synthetic spikes (their widths).
                             Default = None, so will not plot. (checkerboard 
@@ -541,6 +548,10 @@ class plot:
 
         # Plot result:
         fig, ax = plt.subplots(figsize=(8,4))
+        # Specify plot limits:
+        if len(xlims) > 0 and len(ylims) > 0:
+            ax.set_xlim(xlims)
+            ax.set_ylim(ylims)
         if plane == 'xy':
             # Plot data:
             Y, X = np.meshgrid(self.rays.y_node_labels, self.rays.x_node_labels)
@@ -557,6 +568,11 @@ class plot:
                         y_tmp = checkerboard_inv.rays.y_node_labels[checkerboard_inv.spike_y_idxs[j]] + ((checkerboard_inv.rays.y_node_labels[1] - checkerboard_inv.rays.y_node_labels[0]) / 2)
                         circle_tmp = matplotlib.patches.Circle((x_tmp,y_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
                         ax.add_artist(circle_tmp)
+            # And plot seismicity, if specified:
+            if earthquakes_nonlinloc_fnames:
+                for i in range(len(earthquakes_nonlinloc_fnames)):
+                    nonlinloc_hyp_data = NonLinLocPy.read_nonlinloc.read_hyp_file(earthquakes_nonlinloc_fnames[i])
+                    ax.scatter(nonlinloc_hyp_data.max_prob_hypocenter['x'], nonlinloc_hyp_data.max_prob_hypocenter['y'], s=2.5, c='k', alpha=0.5)
         elif plane == 'xz':         
             # Plot data:
             Z, X = np.meshgrid(self.rays.z_node_labels, self.rays.x_node_labels)
@@ -574,6 +590,11 @@ class plot:
                         z_tmp = checkerboard_inv.rays.z_node_labels[checkerboard_inv.spike_z_idxs[j]] + ((checkerboard_inv.rays.z_node_labels[1] - checkerboard_inv.rays.z_node_labels[0]) / 2)
                         circle_tmp = matplotlib.patches.Circle((x_tmp,z_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
                         ax.add_artist(circle_tmp)
+            # And plot seismicity, if specified:
+            if earthquakes_nonlinloc_fnames:
+                for i in range(len(earthquakes_nonlinloc_fnames)):
+                    nonlinloc_hyp_data = NonLinLocPy.read_nonlinloc.read_hyp_file(earthquakes_nonlinloc_fnames[i])
+                    ax.scatter(nonlinloc_hyp_data.max_prob_hypocenter['x'], nonlinloc_hyp_data.max_prob_hypocenter['z'], s=2.5, c='k', alpha=0.5)
         elif plane == 'yz':
             # Plot data:
             Z, Y = np.meshgrid(self.rays.z_node_labels, self.rays.y_node_labels)
@@ -591,6 +612,11 @@ class plot:
                         z_tmp = checkerboard_inv.rays.z_node_labels[checkerboard_inv.spike_z_idxs[j]] + ((checkerboard_inv.rays.z_node_labels[1] - checkerboard_inv.rays.z_node_labels[0]) / 2)
                         circle_tmp = matplotlib.patches.Circle((y_tmp,z_tmp), radius=checkerboard_inv.spike_width_km/2., fill=False, edgecolor='white', linestyle='--')
                         ax.add_artist(circle_tmp)
+            # And plot seismicity, if specified:
+            if earthquakes_nonlinloc_fnames:
+                for i in range(len(earthquakes_nonlinloc_fnames)):
+                    nonlinloc_hyp_data = NonLinLocPy.read_nonlinloc.read_hyp_file(earthquakes_nonlinloc_fnames[i])
+                    ax.scatter(nonlinloc_hyp_data.max_prob_hypocenter['y'], nonlinloc_hyp_data.max_prob_hypocenter['z'], s=2.5, c='k', alpha=0.5)
         else:
             print('Error: Plane option', plane, 'does not exist. Exiting.')
             sys.exit()
