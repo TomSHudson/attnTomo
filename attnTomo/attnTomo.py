@@ -500,6 +500,29 @@ class plot:
         print('Saved interpolated data to: ', fname_out)
         return(self.opt_Q_tomo_array_interp)
 
+    
+    def load_opt_Q_tomo_result_interpolated(self, inv_fname):
+        """Function to load optimal Q tomography result from file
+        and interpolate data.
+        Inputs:
+        inv_fname - The inversion data fname to plot data for.
+        Returns:
+        opt_Q_tomo_array_interp - Optimal tomography array, 
+                                interpolated. (3D np array)
+        """
+        # Load optimal data:
+        opt_result = pickle.load(open(inv_fname, 'rb'))
+        opt_m = opt_result[0]
+
+        # Reconstruct full model 3D grid result from data:
+        # (Add unsampled cells back in then reshape solution back to 3D grid)
+        self.opt_Q_tomo_array = self.inv.reconstruct_full_threeD_grid_soln(opt_m)
+
+        # Interpolate results:
+        self.opt_Q_tomo_array_interp = self.psuedo_threeD_interpolation()
+
+        return(self.opt_Q_tomo_array_interp)
+
 
     def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis',
                                  fig_out_fname='', vmin=10., vmax=1000., xlims=[], ylims=[], checkerboard_inv=None,
