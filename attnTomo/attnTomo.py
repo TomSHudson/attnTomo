@@ -501,11 +501,16 @@ class plot:
         return(self.opt_Q_tomo_array_interp)
 
     
-    def load_opt_Q_tomo_result_interpolated(self, inv_fname):
+    def load_opt_Q_tomo_result_interpolated_smoothed(self, inv_fname, spatial_smooth_sigma_km=0.0):
         """Function to load optimal Q tomography result from file
         and interpolate data.
         Inputs:
         inv_fname - The inversion data fname to plot data for.
+        Optional:
+        spatial_smooth_sigma - The spatial smoothing to apply, in km. 
+                                Applies Gaussian filtering. Default is 0.0, 
+                                which applies no filtering (float)
+
         Returns:
         opt_Q_tomo_array_interp - Optimal tomography array, 
                                 interpolated. (3D np array)
@@ -521,7 +526,15 @@ class plot:
         # Interpolate results:
         self.opt_Q_tomo_array_interp = self.psuedo_threeD_interpolation()
 
-        return(self.opt_Q_tomo_array_interp)
+        # Apply spatial filtering, if specified:
+        if spatial_smooth_sigma_km > 0.:
+            grid_spacing_km = self.rays.x_node_labels[1] - self.rays.x_node_labels[0] # (Note: Assumes uniform grid spacing in x,y,z)
+            gauss_filt_sigma = spatial_smooth_sigma_km / grid_spacing_km
+            self.opt_Q_tomo_array_interp_smooth = gaussian_filter(self.opt_Q_tomo_array_interp, sigma=gauss_filt_sigma)
+        else:
+            self.opt_Q_tomo_array_interp_smooth = self.opt_Q_tomo_array_interp
+
+        return(self.opt_Q_tomo_array_interp_smooth)
 
 
     def plot_inversion_result(self, inv_fname, plane='xz', plane_idx=0, spatial_smooth_sigma_km=0.0, cmap='viridis',
@@ -564,13 +577,18 @@ class plot:
         if spatial_smooth_sigma_km > 0.:
             grid_spacing_km = self.rays.x_node_labels[1] - self.rays.x_node_labels[0] # (Note: Assumes uniform grid spacing in x,y,z)
             gauss_filt_sigma = spatial_smooth_sigma_km / grid_spacing_km
-            print(gauss_filt_sigma)
             self.opt_Q_tomo_array_interp_smooth = gaussian_filter(self.opt_Q_tomo_array_interp, sigma=gauss_filt_sigma)
         else:
             self.opt_Q_tomo_array_interp_smooth = self.opt_Q_tomo_array_interp
 
         # Plot result:
-        fig, ax = plt.subplots(figsize=(8,4))
+        if len(xlims) > 0 and len(ylims) > 0:
+            max_lim_tmp = np.max(np.abs(np.array((xlims, ylims))))
+            xlims = np.array(xlims)
+            ylims = np.array(ylims)
+            fig, ax = plt.subplots(figsize=(6*((xlims[1]-xlims[0])/max_lim_tmp),(6*((ylims[1]-ylims[0])/max_lim_tmp))))
+        else:
+            fig, ax = plt.subplots(figsize=(8,4))
         # Specify plot limits:
         if len(xlims) > 0 and len(ylims) > 0:
             ax.set_xlim(xlims)
