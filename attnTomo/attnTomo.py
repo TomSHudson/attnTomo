@@ -586,7 +586,7 @@ class plot:
             max_lim_tmp = np.max(np.abs(np.array((xlims, ylims))))
             xlims = np.array(xlims)
             ylims = np.array(ylims)
-            fig, ax = plt.subplots(figsize=(6*((xlims[1]-xlims[0])/max_lim_tmp),(6*((ylims[1]-ylims[0])/max_lim_tmp))))
+            fig, ax = plt.subplots(figsize=(3*((xlims[1]-xlims[0])/max_lim_tmp),(3*((ylims[1]-ylims[0])/max_lim_tmp))))
         else:
             fig, ax = plt.subplots(figsize=(8,4))
         # Specify plot limits:
