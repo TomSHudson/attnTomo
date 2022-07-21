@@ -514,7 +514,11 @@ class plot:
             result = pickle.load(open(fname_in, 'rb'))
             m = result[0]
             soln_norms[i] = np.sqrt(np.sum(m**2))
-            res_norms[i] = np.sqrt(np.sum((np.matmul(self.inv.G,m) - self.inv.t_stars)**2))
+            if self.inv.perform_diff_inv:
+                t_stars_minus_diff = self.inv.t_stars - np.dot(self.inv.G, np.ones(self.inv.G.shape[1])*self.inv.diff_inv_m0)
+                res_norms[i] = np.sqrt(np.sum((np.matmul(self.inv.G,m) - t_stars_minus_diff)**2))
+            else:
+                res_norms[i] = np.sqrt(np.sum((np.matmul(self.inv.G,m) - self.inv.t_stars)**2))
 
         # And plot results:
         plt.figure()
@@ -540,7 +544,8 @@ class plot:
             # And select non-zeros values only:
             non_zero_idxs = np.argwhere(self.opt_Q_tomo_array[:,:,i] > 0.)
             # And check that there are some non-zero values:
-            if non_zero_idxs.shape[0] > 0.:
+            # (interpolation scheme needs at least 4 data points!)
+            if non_zero_idxs.shape[0] > 4.:
                 x_idxs = non_zero_idxs[:,0]
                 y_idxs = non_zero_idxs[:,1]
                 points = np.zeros((len(x_idxs),2))
