@@ -20,6 +20,7 @@
 
 # Import neccessary modules:
 import os, sys
+from re import A
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt 
@@ -50,7 +51,7 @@ class rays:
     and grid nodes. Creates a class describing rays for a particular seismic phase.
     Note: All units are SI units, apart from km rather than m scales."""
 
-    def __init__(self, x_node_labels, y_node_labels, z_node_labels, vel_grid, n_threads=1):
+    def __init__(self, x_node_labels, y_node_labels, z_node_labels, vel_grid, QpQs_inv_constraint_Qp_grid=None, n_threads=1):
         """Function to initialise rays class. 
         Inputs:
         x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
@@ -58,6 +59,8 @@ class rays:
         x_labels - Array of x labels for vel_grid nodes, in km. (1D np array)
         vel_grid - A 3D grid describing the velocity, in km/s, for a particular seismic phase. (np array, of shape x,y,z)
         Optional:
+        QpQs_inv_constraint_Qp_grid - A 3D grid specifying Qp values if performing constrained Qp/Qs inversion (of Wei and Wiens (2020)). 
+                                        (np array, of shape x,y,z)
         n_threads - Number of threads to try and use.
         """
         # Assign the grids:
@@ -67,6 +70,7 @@ class rays:
         self.n_threads = n_threads
         self.grid = ttcrpy_rgrid.Grid3d(x_node_labels, y_node_labels, z_node_labels, cell_slowness=False, n_threads=self.n_threads)
         self.vel_grid = vel_grid
+        self.QpQs_inv_constraint_Qp_grid = QpQs_inv_constraint_Qp_grid
         # Initialise other key variables:
         self.rays_coords = [] # Will store ray coords of each (xs,ys,zs) as list of arrays
         self.rays_cell_path_lengths_grids = [] # Will store ray cell path lengths for each ray
@@ -187,11 +191,23 @@ class rays:
             ray_sampling_grid_ravelled = self.ray_sampling_grid.ravel()
             self.unsampled_cell_idxs = np.argwhere(ray_sampling_grid_ravelled == 0)[:,0]
             self.sampled_cell_idxs = np.argwhere(ray_sampling_grid_ravelled != 0)[:,0] # (And find sampled cells, for easy reconstruction later)
+            # If performing constrained Qp/Qs inversion, also find indices where Qp/Qs has not been solved:
+            if not self.QpQs_inv_constraint_Qp_grid is None:
+                unsolved_Qp_cell_idxs = np.argwhere(np.isnan(self.QpQs_inv_constraint_Qp_grid.ravel()))[:,0]
+                self.unsampled_cell_idxs = np.unique(np.append(self.unsampled_cell_idxs, unsolved_Qp_cell_idxs)) # Update unsampled indices
+                all_idxs_tmp = np.arange(len(ray_sampling_grid_ravelled))
+                self.sampled_cell_idxs = all_idxs_tmp[np.argwhere(np.in1d(all_idxs_tmp, self.unsampled_cell_idxs) == False)].flatten() # Update sampled indices (I.e. Find values that aren't in unsampled_cell_idxs)
             # And remove non-sampled cells from rays_cell_path_lengths_grids:
             self.rays_cell_path_lengths_grids = np.delete(self.rays_cell_path_lengths_grids, self.unsampled_cell_idxs, axis=1)
             # And find consolidated vel_grid:
             self.vel_grid_ravelled = self.vel_grid.ravel()
             self.vel_grid_ravelled = np.delete(self.vel_grid_ravelled, self.unsampled_cell_idxs, axis=0)
+            # And consolidate Qp grid, if performing constrained Qp/Qs inversion:
+            if not self.QpQs_inv_constraint_Qp_grid is None:
+                self.QpQs_inv_constraint_Qp_grid_ravelled = self.QpQs_inv_constraint_Qp_grid.ravel()
+                self.QpQs_inv_constraint_Qp_grid_ravelled = np.delete(self.QpQs_inv_constraint_Qp_grid_ravelled, self.unsampled_cell_idxs, axis=0)
+            else:
+                self.QpQs_inv_constraint_Qp_grid_ravelled = None
             print("Consolidated arrays by removing non-sampled cells. \n The info on these removed cells is held in: self.unsampled_cell_idxs.")
             # And tidy:
             gc.collect()
@@ -270,7 +286,10 @@ class inversion:
         self.seismic_phase_to_use = 'P' # Can be P or S
         self.Q_stdev_filt = 400. # Standard deviation in Q filter to use
         self.inv_info_fname = "inv_info.pkl"
-
+        # And print any info. on inversion:
+        if not self.rays.QpQs_inv_constraint_Qp_grid is None:
+            print("Note: Performing Qp constrained Qp/Qs inversion as rays.QpQs_inv_constraint_Qp_grid is specified.")
+            print("Therefore output will be Qp/Qs.")
 
     def prep_rays_for_inversion(self):
         """Function to prep the ray-tracing data for the inversion."""
@@ -284,6 +303,11 @@ class inversion:
         print("Shape after consolidation:", self.rays.rays_cell_path_lengths_grids.shape)
         # Get tomography tensor:
         self.G = self.rays.rays_cell_path_lengths_grids.copy() / self.rays.vel_grid_ravelled
+        # And include 1 / Qp in tomography tensor, if performing Qp constrained Qp/Qs inversion:
+        # (As in Wei and Wiens (2020) method)
+        if not self.rays.QpQs_inv_constraint_Qp_grid is None:
+            self.G = self.G / self.rays.QpQs_inv_constraint_Qp_grid_ravelled
+        # And tidy:
         del self.rays.rays_cell_path_lengths_grids
         gc.collect()
         print('Finished data preparation for inversion')
@@ -341,7 +365,7 @@ class inversion:
         return(self.Q_tomo_array)
 
 
-    def perform_inversion(self, lamb=1., Q_init=250., result_out_fname=''):
+    def perform_inversion(self, lamb=1., Q_init=250., result_out_fname='', perform_diff_inv=False, diff_inv_m0=1.):
         """Function to perform the inversion, using lsqr method.
         Inputs:
         Optional:
@@ -351,14 +375,28 @@ class inversion:
                 array of floats)
         result_out_fname - The path/filename to save the inversion output to. If unspecified by 
                             user, will not save to file (str)
+        perform_diff_inv - If True, then will invert for the difference in the model from the value <diff_inv_m0>.
+                            (bool)
+        diff_inv_m0 - m0 value to use if performing a difference inversion (I.e. if <perform_diff_inv> = True).
+                        (float)
         """
         # Initialise function input parameters:
         self.lamb = lamb # Damping
         self.Q_init = Q_init # Initial guess at Q
         self.result_out_fname = result_out_fname
+        if perform_diff_inv:
+            self.perform_diff_inv = perform_diff_inv
+            self.diff_inv_m0 = diff_inv_m0
         # perform lsqr inversion:
         x0 = np.ones(self.G.shape[1]) / self.Q_init # Initial guess
-        result = lsqr(self.G, self.t_stars, damp=self.lamb, show=True, x0=x0)
+        if perform_diff_inv:
+            # Perform diff inv:
+            # (Eq. 7, Wei and Wiens (2020))
+            t_stars_minus_diff = self.t_stars - np.dot(self.G, np.ones(self.G.shape[1])*diff_inv_m0)
+            result = lsqr(self.G, t_stars_minus_diff, damp=self.lamb, show=True, x0=x0)
+        else:
+            # Perform inv:
+            result = lsqr(self.G, self.t_stars, damp=self.lamb, show=True, x0=x0)
         self.m = result[0]
         # And save result, if specified:
         if len(result_out_fname) > 0:
@@ -369,7 +407,9 @@ class inversion:
         return(self.Q_tomo_array)
 
 
-    def perform_multi_lambda_reg_inversion(self, lambs=[1., 0.1, 1e-2, 1e-3, 1e-4], Q_init=250., results_out_fname_prefix='result_lsqr_lamb_'):
+    def perform_multi_lambda_reg_inversion(self, lambs=[1., 0.1, 1e-2, 1e-3, 1e-4], Q_init=250., 
+                                            results_out_fname_prefix='result_lsqr_lamb_', 
+                                            perform_diff_inv=False, diff_inv_m0=1.):
         """Function to perform inversion for mulitple damping coefficients, to find the
         optimal regualarised solution.
         Inputs:
@@ -380,17 +420,32 @@ class inversion:
                 array of floats)
         results_out_fname_prefix - The path/filename prefix to save the inversion output to. 
                                     If unspecified by user, will not save to file (str)
+        perform_diff_inv - If True, then will invert for the difference in the model from the value <diff_inv_m0>.
+                            (bool)
+        diff_inv_m0 - m0 value to use if performing a difference inversion (I.e. if <perform_diff_inv> = True).
+                        (float)
         """
         # Initialise function input parameters:
         self.lambs = lambs # List of damping/reg. coefficients
         self.Q_init = Q_init # Initial guess at Q
         self.results_out_fname_prefix = results_out_fname_prefix
+        if perform_diff_inv:
+            self.perform_diff_inv = perform_diff_inv
+            self.diff_inv_m0 = diff_inv_m0
         # Loop over damping coefficients, performing inversion:
         for i in range(len(self.lambs)):
             fname_out = self.results_out_fname_prefix+str(self.lambs[i])+'_'+self.seismic_phase_to_use+'.pkl'
             # Use lsqr method:
             x0 = np.ones(self.G.shape[1]) / self.Q_init # Initial guess
-            result = lsqr(self.G, self.t_stars, damp=self.lambs[i], show=True, x0=x0)
+            if perform_diff_inv:
+                # Perform diff inv:
+                # (Eq. 7, Wei and Wiens (2020))
+                t_stars_minus_diff = self.t_stars - np.dot(self.G, np.ones(self.G.shape[1])*diff_inv_m0)
+                result = lsqr(self.G, t_stars_minus_diff, damp=self.lambs[i], show=True, x0=x0)
+            else:
+                # Perform inv:
+                result = lsqr(self.G, self.t_stars, damp=self.lambs[i], show=True, x0=x0)
+                
             # Save result:
             pickle.dump(result, open(fname_out, 'wb'))
 
