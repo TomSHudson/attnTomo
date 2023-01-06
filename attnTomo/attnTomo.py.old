@@ -46,28 +46,6 @@ from scipy.stats import multivariate_normal
 
 
 #----------------------------------------------- Define main functions -----------------------------------------------
-# def batch_gradient_descent(Y, G, m_init, lr=0.01, n_iter=100):
-#     """Function to perform batch gradient decent to solve a system of linear equations of the form:
-#     Y = G.m.
-#     Inputs:
-#     Y - The Y values (1D np array).
-#     G - The G matrix (2D np array).
-#     m_init - The initial starting model.
-#     lr - The learning rate. Default is 0.01 (float). 
-#     n_iter - The number of iterations to perform. Default is 100 (int).
-#     Returns:
-#     m = The model output.
-#     """
-#     # Find number of samples:
-#     n_samp = len(Y)
-#     # Perform iterations:
-#     m = m_init.copy() # Set initial guess
-#     for i in range(n_iter):
-#         Y_hat = np.dot(G, m) # Find Y for current model solution
-#         cost = # Mean-squared error cost
-#         m = m
-
-
 class rays:
     """Class to obtain rays and path lengths for tomography, given event locations, station locations, 
     and grid nodes. Creates a class describing rays for a particular seismic phase.
